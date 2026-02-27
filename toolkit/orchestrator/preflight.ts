@@ -40,6 +40,7 @@ export async function runDeepPreflight(
         checks.push(checkSolanaAnchorToml(issues, warnings))
     }
     if (chains.includes('sui')) {
+        checkSuiMoveDeps(issues)
         try {
             checkSuiPublishedToml(warnings)
         } catch (e: any) {
@@ -205,6 +206,22 @@ async function checkSolanaAnchorToml(
         }
     } catch (e: any) {
         warnings.push(`solana: Could not derive keypair program ID: ${e.message}`)
+    }
+}
+
+// ============ Sui: Move Dependencies ============
+
+function checkSuiMoveDeps(issues: string[]): void {
+    const depsDir = path.resolve(PROJECT_ROOT, '_sui_deps')
+    if (!fs.existsSync(depsDir)) {
+        issues.push(
+            'sui: _sui_deps/ not found. Clone LZ Sui SDK packages:\n' +
+            '  git clone --depth 1 https://github.com/LayerZero-Labs/devtools.git /tmp/lz-devtools\n' +
+            '  mkdir -p _sui_deps\n' +
+            '  cp -r /tmp/lz-devtools/packages/layerzero-v2/sui/{oapps,endpoint-v2,message-libs,utils,zro} _sui_deps/\n' +
+            '  cp -r /tmp/lz-devtools/packages/layerzero-v2/sui/contracts/{dynamic-call,ptb-builders} _sui_deps/\n' +
+            '  rm -rf /tmp/lz-devtools'
+        )
     }
 }
 

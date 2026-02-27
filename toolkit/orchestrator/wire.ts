@@ -30,7 +30,7 @@ interface WireConfig {
 
 function getWireCommand(src: ChainName, dst: ChainName): WireConfig {
     const dstShort = CHAINS[dst]?.shortName || dst
-    const env = { DST: dstShort }
+    const env = { DST: dstShort, SET_DVN: 'true' }
 
     if (src === 'arbitrum') {
         // EVM source uses Hardhat runner

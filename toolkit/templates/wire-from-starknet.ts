@@ -1,7 +1,7 @@
 /**
  * Wire Starknet OFT Adapter → any destination chain.
  *
- * Order CRITICAL: set_delegate → set_enforced_options → set_peer
+ * Steps: set_delegate → DVN config (send+recv) → set_enforced_options → set_peer
  *
  * Usage:
  *   DST=arb npx ts-node toolkit/templates/wire-from-starknet.ts
@@ -12,12 +12,59 @@ import 'dotenv/config'
 import { Account, RpcProvider, Contract, uint256, num } from 'starknet'
 import { Options } from '@layerzerolabs/lz-v2-utilities'
 
-import { getChain, getGasConfig, getPathwayStatus } from '../constants'
+import { getChain, getGasConfig, getPathwayStatus, DVNS } from '../constants'
 import { addressToBytes32BigInt } from '../encoding'
 
 // ============ Config ============
 
 const DST = (process.env.DST || '').toLowerCase()
+
+// ============ Helpers ============
+
+/** Try multiple function names on a contract, return first that resolves. */
+async function callFirst(contract: Contract, names: string[], args: any[]): Promise<any> {
+    for (const name of names) {
+        try {
+            return await contract.call(name, args)
+        } catch {
+            continue
+        }
+    }
+    throw new Error(`None of [${names.join(', ')}] found on contract`)
+}
+
+/** Invoke a contract method, log TX, wait for confirmation. */
+async function invokeAndWait(
+    contract: Contract,
+    method: string,
+    args: any[],
+    provider: RpcProvider,
+    label: string,
+): Promise<string> {
+    const tx = await contract.invoke(method, args)
+    console.log(`  TX: ${tx.transaction_hash}`)
+    await provider.waitForTransaction(tx.transaction_hash)
+    console.log(`  ${label}`)
+    return tx.transaction_hash
+}
+
+/**
+ * Build a ULN config as Cairo-serialized felt array.
+ * Layout: [confirmations, req_count, opt_count, opt_threshold, req_len, ...dvns, opt_len]
+ */
+function buildUlnConfigFelts(confirmations: number, requiredDvns: string[]): string[] {
+    return [
+        confirmations.toString(),
+        requiredDvns.length.toString(),
+        '0',  // optional_dvn_count
+        '0',  // optional_dvn_threshold
+        requiredDvns.length.toString(),
+        ...requiredDvns,
+        '0',  // optional_dvns (empty)
+    ]
+}
+
+// ============ Main ============
 
 async function main() {
     if (!DST) {
@@ -43,7 +90,6 @@ async function main() {
     const peerAddress = resolvePeerAddress(DST)
     if (!peerAddress) throw new Error(`No peer address found for ${DST}. Set the appropriate env var.`)
 
-    // Preflight
     const pathwayStatus = getPathwayStatus('starknet', DST)
     if (pathwayStatus === 'blocked') {
         console.error(`WARNING: Stk ↔ ${dstChain.name} pathway is BLOCKED (no LZ endpoint).`)
@@ -60,7 +106,7 @@ async function main() {
     console.log(`Adapter:  ${adapterAddress}`)
     console.log(`Peer:     0x${peerBigInt.toString(16).padStart(64, '0')}\n`)
 
-    // Get adapter ABI
+    // Load contract ABIs from chain
     const adapterClassAt = await provider.getClassAt(adapterAddress)
     const adapter = new Contract({
         abi: adapterClassAt.abi,
@@ -68,53 +114,81 @@ async function main() {
         providerOrAccount: account,
     })
 
+    const endpointAddress = getChain('stk').endpointAddress
+    const endpointClassAt = await provider.getClassAt(endpointAddress)
+    const endpoint = new Contract({
+        abi: endpointClassAt.abi,
+        address: endpointAddress,
+        providerOrAccount: account,
+    })
+
+    const dvnAddress = DVNS.starknet.lzLabs.address
+
     // ===== Step 1: Set Delegate =====
     console.log('Step 1: Setting delegate to deployer...')
     try {
-        const tx = await adapter.invoke('set_delegate', [account.address])
-        console.log(`  TX: ${tx.transaction_hash}`)
-        await provider.waitForTransaction(tx.transaction_hash)
-        console.log('  Delegate set!')
+        await invokeAndWait(adapter, 'set_delegate', [account.address], provider, 'Delegate set!')
     } catch (e: any) {
         console.log(`  set_delegate skipped (likely already set): ${e.message?.slice(0, 120)}`)
     }
 
-    // ===== Step 2: Set Enforced Options =====
-    console.log(`\nStep 2: Setting enforced options for ${dstChain.name}...`)
+    // ===== Step 2: Configure Send ULN (DVN) =====
+    console.log('\nStep 2: Configuring send ULN DVN...')
+    console.log(`  DVN: ${dvnAddress}`)
+    try {
+        const sendLib = num.toHex(
+            await callFirst(endpoint, ['default_send_library', 'get_default_send_library'], [dstChain.eid]) as any
+        )
+        console.log(`  Send library: ${sendLib}`)
+
+        await invokeAndWait(endpoint, 'set_config', [
+            adapterAddress,
+            sendLib,
+            [{ eid: dstChain.eid, config_type: 2, config: buildUlnConfigFelts(gasConfig.confirmations, [dvnAddress]) }],
+        ], provider, 'Send ULN DVN configured!')
+    } catch (e: any) {
+        console.error(`  Send ULN config failed: ${e.message?.slice(0, 200)}`)
+        console.error('  Continuing with remaining steps...')
+    }
+
+    // ===== Step 3: Configure Recv ULN (DVN) =====
+    console.log('\nStep 3: Configuring recv ULN DVN...')
+    try {
+        const recvLib = num.toHex(
+            await callFirst(endpoint, ['default_receive_library', 'get_default_receive_library', 'default_send_library'], [dstChain.eid]) as any
+        )
+        console.log(`  Recv library: ${recvLib}`)
+
+        await invokeAndWait(endpoint, 'set_config', [
+            adapterAddress,
+            recvLib,
+            [{ eid: dstChain.eid, config_type: 2, config: buildUlnConfigFelts(1, [dvnAddress]) }],
+        ], provider, 'Recv ULN DVN configured!')
+    } catch (e: any) {
+        console.error(`  Recv ULN config failed: ${e.message?.slice(0, 200)}`)
+        console.error('  Continuing with remaining steps...')
+    }
+
+    // ===== Step 4: Set Enforced Options =====
+    console.log(`\nStep 4: Setting enforced options for ${dstChain.name}...`)
     const options = Options.newOptions()
         .addExecutorLzReceiveOption(gasConfig.lzReceiveGas, gasConfig.lzReceiveValue)
         .toBytes()
     const optionsHex = '0x' + Buffer.from(options).toString('hex')
     console.log(`  Gas: ${gasConfig.lzReceiveGas}, Value: ${gasConfig.lzReceiveValue}`)
 
-    try {
-        const tx = await adapter.invoke('set_enforced_options', [[{
-            eid: dstChain.eid,
-            msg_type: 1, // SEND
-            options: optionsHex,
-        }]])
-        console.log(`  TX: ${tx.transaction_hash}`)
-        await provider.waitForTransaction(tx.transaction_hash)
-        console.log('  Enforced options set!')
-    } catch (e: any) {
-        console.error(`  set_enforced_options failed: ${e.message?.slice(0, 200)}`)
-        throw e
-    }
+    await invokeAndWait(adapter, 'set_enforced_options', [[{
+        eid: dstChain.eid,
+        msg_type: 1, // SEND
+        options: optionsHex,
+    }]], provider, 'Enforced options set!')
 
-    // ===== Step 3: Set Peer =====
-    console.log(`\nStep 3: Setting ${dstChain.name} as peer...`)
-    try {
-        const tx = await adapter.invoke('set_peer', [
-            dstChain.eid,
-            { value: uint256.bnToUint256(peerBigInt) },
-        ])
-        console.log(`  TX: ${tx.transaction_hash}`)
-        await provider.waitForTransaction(tx.transaction_hash)
-        console.log('  Peer set!')
-    } catch (e: any) {
-        console.error(`  set_peer failed: ${e.message?.slice(0, 200)}`)
-        throw e
-    }
+    // ===== Step 5: Set Peer =====
+    console.log(`\nStep 5: Setting ${dstChain.name} as peer...`)
+    await invokeAndWait(adapter, 'set_peer', [
+        dstChain.eid,
+        { value: uint256.bnToUint256(peerBigInt) },
+    ], provider, 'Peer set!')
 
     // ===== Verify =====
     console.log('\n=== Verification ===')

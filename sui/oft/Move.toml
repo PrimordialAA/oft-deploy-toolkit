@@ -4,14 +4,14 @@ version = "0.0.1"
 edition = "2024.beta" # edition = "legacy" to use legacy (pre-2024) Move
 
 [dependencies]
-OApp = { local = "../../oapp" }
-OFTCommon = { local = "../oft-common" }
-PtbMoveCall = { local = "../../../ptb-builders/ptb-move-call" }
+OApp = { local = "../../_sui_deps/oapps/oapp" }
+OFTCommon = { local = "../../_sui_deps/oapps/oft/oft-common" }
+PtbMoveCall = { local = "../../_sui_deps/ptb-builders/ptb-move-call" }
 
 [addresses]
 oft = "0x0"
 
 [dev-dependencies]
-SimpleMessageLib = { local = "../../../message-libs/simple-message-lib" }
+SimpleMessageLib = { local = "../../_sui_deps/message-libs/simple-message-lib" }
 
 [dev-addresses]

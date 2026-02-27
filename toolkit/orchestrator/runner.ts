@@ -38,7 +38,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
         args = [],
         cwd = PROJECT_ROOT,
         env: envOverrides = {},
-        timeout = 600_000,
+        timeout = 120_000,
         label,
     } = opts
 

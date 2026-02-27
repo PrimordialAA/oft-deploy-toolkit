@@ -29,7 +29,7 @@ import { addressToBytes32Uint8 } from '../encoding'
 // ============ Config ============
 
 const DST = (process.env.DST || '').toLowerCase()
-const SET_DVN = process.env.SET_DVN === 'true'
+const SET_DVN = process.env.SET_DVN !== 'false'
 const SOLANA_EID = EndpointId.SOLANA_V2_MAINNET
 const OFT_PROGRAM_ID = process.env.SOLANA_OFT_PROGRAM_ID || ''
 const OFT_STORE = process.env.SOLANA_OFT_STORE || ''

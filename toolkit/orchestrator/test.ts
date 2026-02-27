@@ -58,7 +58,7 @@ function getSendCommand(src: ChainName, dst: ChainName, amount: string): SendCon
 
 async function pollDelivery(txHash: string, maxWaitMs = 300_000): Promise<string> {
     const startTime = Date.now()
-    const pollInterval = 15_000 // 15s
+    const pollInterval = 5_000 // 5s
 
     while (Date.now() - startTime < maxWaitMs) {
         try {

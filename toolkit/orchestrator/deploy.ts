@@ -323,11 +323,36 @@ async function deploySolana(state: OrchestratorState, dryRun: boolean): Promise<
     const soPath = path.resolve(PROJECT_ROOT, 'target/deploy/oft.so')
     if (!fs.existsSync(soPath)) {
         console.log('[sol] Step 0: Building Solana program (anchor build)...')
+
+        // Derive program ID from keypair so anchor build compiles with correct declare_id!
+        // The lib.rs uses program_id_from_env!("OFT_ID", default) — without this, a fresh
+        // keypair causes DeclaredProgramIdMismatch at deploy time.
+        const buildEnv: Record<string, string> = {}
+        const kpPath = path.resolve(PROJECT_ROOT, 'target/deploy/oft-keypair.json')
+        if (fs.existsSync(kpPath)) {
+            try {
+                const env = readEnv()
+                const home = process.env.HOME || ''
+                const extraPath = (env.EXTRA_PATH || '').replace(/~/g, home)
+                const testPath = extraPath ? `${extraPath}:${process.env.PATH || ''}` : process.env.PATH || ''
+                const result = execSync(`solana-keygen pubkey ${kpPath}`, {
+                    env: { ...process.env, PATH: testPath },
+                    timeout: 5_000,
+                    stdio: 'pipe',
+                })
+                buildEnv.OFT_ID = result.toString().trim()
+                console.log(`[sol] OFT_ID=${buildEnv.OFT_ID} (from keypair)`)
+            } catch {
+                console.warn('[sol] Warning: Could not derive OFT_ID from keypair — using default')
+            }
+        }
+
         const build = await run({
             command: 'anchor',
             args: ['build'],
             label: 'sol-build',
             timeout: 300_000,
+            env: buildEnv,
         })
         if (build.exitCode !== 0) {
             setDeployStatus(state, 'solana', { status: 'failed', error: 'anchor build failed' })
@@ -342,9 +367,15 @@ async function deploySolana(state: OrchestratorState, dryRun: boolean): Promise<
     console.log('[sol] Step 1: Deploying program...')
     const programDeploy = await run({
         command: 'solana',
-        args: ['program', 'deploy', 'target/deploy/oft.so', '--program-id', 'target/deploy/oft-keypair.json', '--output', 'json'],
+        args: [
+            'program', 'deploy',
+            'target/deploy/oft.so',
+            '--program-id', 'target/deploy/oft-keypair.json',
+            '--with-compute-unit-price', '50000',
+            '--output', 'json',
+        ],
         label: 'sol',
-        timeout: 600_000,
+        timeout: 120_000,
     })
 
     let programId = ''
@@ -627,7 +658,7 @@ async function deploySui(state: OrchestratorState, dryRun: boolean): Promise<voi
         if (tokenJson.coinType) console.log(`[sui] Coin Type: ${tokenJson.coinType}`)
 
         // Wait for RPC sync
-        await new Promise((r) => setTimeout(r, 3000))
+        await new Promise((r) => setTimeout(r, 1000))
     }
 
     // Step 2: Publish OFT package (skip if already published)
@@ -671,7 +702,7 @@ async function deploySui(state: OrchestratorState, dryRun: boolean): Promise<voi
         console.log(`[sui] OFT Package: ${oftPackageId}`)
 
         // Wait for RPC sync
-        await new Promise((r) => setTimeout(r, 3000))
+        await new Promise((r) => setTimeout(r, 1000))
     }
 
     // Step 3: Initialize OFT (always runs — idempotent)

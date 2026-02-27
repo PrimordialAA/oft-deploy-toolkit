@@ -30,14 +30,18 @@ starknet/target/
 sui/*/build/
 sui/token/sources/
 sui/token/Move.toml
+sui/token/Move.lock
 sui/token/Published.toml
+sui/oft/Move.lock
 sui/oft/Published.toml
+_sui_deps/
 
 # TON
 ton/*/build/
 ton/*/node_modules/
 
-# Orchestrator state
+# Deployment artifacts (chain-specific, per-run)
+deployments/
 toolkit/state.json
 
 # Editor and OS files

@@ -1,0 +1,15 @@
+import './common/wire'
+import './sendOFT'
+import './simple-workers-mock/commit'
+import './simple-workers-mock/commitAndExecute'
+import './simple-workers-mock/verify'
+import './simple-workers-mock/lzReceive'
+import './simple-workers-mock/processReceive'
+import './simple-workers-mock/setReceiveConfig'
+import './simple-workers-mock/setSendConfig'
+import './simple-workers-mock/skip'
+
+// Solana tasks
+import './solana/createOFT'
+import './solana/initConfig'
+import './solana/sendSolana'
