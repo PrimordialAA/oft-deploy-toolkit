@@ -53,9 +53,14 @@ EXTRA_PATH=/home/you/.cargo/bin:/home/you/.local/share/solana/install/active_rel
 ## Quick Start
 
 ```bash
-# 0. Configure environment (one-time setup)
+# 0. Configure environment and build prerequisites (one-time setup)
 cp .env.example .env
 # Fill in: TOKEN_NAME, TOKEN_SYMBOL, private keys, RPC URLs, EXTRA_PATH
+
+pnpm install
+cd ton/lz-framework && pnpm install && pnpm build && cd ../..
+mkdir -p target/deploy
+solana-keygen new --no-passphrase -o target/deploy/oft-keypair.json  # skip if exists
 
 # Deploy + wire + test all 5 chains
 npx tsx toolkit/oft.ts full --reset
