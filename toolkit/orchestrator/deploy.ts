@@ -476,6 +476,11 @@ function generateSuiTokenSource(): void {
     const moveFile = path.resolve(sourcesDir, `${moduleName}.move`)
     const moveToml = path.resolve(PROJECT_ROOT, 'sui/token/Move.toml')
 
+    // Ensure sources directory exists
+    if (!fs.existsSync(sourcesDir)) {
+        fs.mkdirSync(sourcesDir, { recursive: true })
+    }
+
     // Check if source already matches (idempotent)
     if (fs.existsSync(moveFile)) {
         const existing = fs.readFileSync(moveFile, 'utf-8')
