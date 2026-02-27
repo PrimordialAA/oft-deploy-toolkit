@@ -1,0 +1,35 @@
+#include "../../protocol/core/baseStorage.fc";
+#include "../baseOApp/storage.fc";
+
+;; OFT Adapter storage layout
+;; Extends BaseOApp with Jetton Master address for mint/burn operations
+const int OftAdapter::NAME = "oftAdapter"u;
+
+;; field names
+const int OftAdapter::baseStorage = 0;
+const int OftAdapter::baseOAppStorage = 1;
+const int OftAdapter::jettonMasterAddress = 2;
+
+;; @owner oApp owner EOA
+cell OftAdapter::New(
+    int owner,
+    int controllerAddress,
+    int eid,
+    int jettonMasterAddress,
+    cell endpointCode,
+    cell channelCode
+) inline method_id {
+    return cl::declare(
+        OftAdapter::NAME,
+        unsafeTuple([
+            [cl::t::objRef, BaseStorage::New(owner)],          ;; OftAdapter::baseStorage
+            [cl::t::objRef, BaseOApp::New(
+                controllerAddress,
+                eid,
+                endpointCode,
+                channelCode
+            )],                                                  ;; OftAdapter::baseOAppStorage
+            [cl::t::address, jettonMasterAddress]               ;; OftAdapter::jettonMasterAddress
+        ])
+    );
+}

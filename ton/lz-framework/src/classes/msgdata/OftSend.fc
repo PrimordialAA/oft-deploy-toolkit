@@ -1,0 +1,34 @@
+#include "../../funC++/classlib.fc";
+
+;; OFT Send message data
+;; Sent by user to initiate a cross-chain transfer
+const int md::OftSend::NAME = "oftSend"u;
+
+;; field names
+const int md::OftSend::dstEid = 0;
+const int md::OftSend::recipientBytes32 = 1;
+const int md::OftSend::amountSD = 2;
+const int md::OftSend::nativeFee = 3;
+const int md::OftSend::zroFee = 4;
+const int md::OftSend::extraOptions = 5;
+
+cell md::OftSend::New(
+    int dstEid,
+    int recipientBytes32,
+    int amountSD,
+    int nativeFee,
+    int zroFee,
+    cell $extraOptions
+) impure inline method_id {
+    return cl::declare(
+        md::OftSend::NAME,
+        unsafeTuple([
+            [cl::t::uint32, dstEid],             ;; md::OftSend::dstEid
+            [cl::t::uint256, recipientBytes32],   ;; md::OftSend::recipientBytes32
+            [cl::t::uint64, amountSD],            ;; md::OftSend::amountSD (shared decimals)
+            [cl::t::coins, nativeFee],            ;; md::OftSend::nativeFee
+            [cl::t::coins, zroFee],               ;; md::OftSend::zroFee
+            [cl::t::objRef, $extraOptions]        ;; md::OftSend::extraOptions
+        ])
+    );
+}

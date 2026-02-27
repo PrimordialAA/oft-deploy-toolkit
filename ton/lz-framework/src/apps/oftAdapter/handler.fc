@@ -1,0 +1,197 @@
+;; OFT Adapter handler — implements cross-chain send/receive for ITOFT token
+;; Pattern: Based on Counter example, adapted for OFT burn-mint model
+;;
+;; Send flow (TON -> remote):
+;;   1. User calls SEND_OFT with {dstEid, recipient, amount, nativeFee}
+;;   2. Adapter encodes OFT message: [bytes32 recipient][uint64 amountSD]
+;;   3. Adapter calls _lzSend() to dispatch via LayerZero
+;;   Note: Token burn is handled off-chain in v1 (user burns separately)
+;;
+;; Receive flow (remote -> TON):
+;;   1. LZ delivers packet to adapter via _lzReceiveExecute
+;;   2. Adapter decodes OFT message: [bytes32 recipient][uint64 amountSD]
+;;   3. Adapter sends mint message to Jetton Master for the recipient
+
+#include "../../classes/lz/Packet.fc";
+#include "../../classes/lz/Path.fc";
+#include "../../classes/msgdata/OftSend.fc";
+#include "../../classes/msgdata/ExtendedMd.fc";
+#include "../../classes/msgdata/Nonce.fc";
+#include "../../classes/msgdata/OptionsV1.fc";
+#include "../../classes/msgdata/PacketId.fc";
+#include "../../classes/msgdata/SetAddress.fc";
+#include "../../classes/msgdata/SetPeer.fc";
+#include "../../funC++/handlerCore.fc";
+#include "../../funC++/baseInterface.fc";
+#include "../../protocol/channel/interface.fc";
+#include "../../protocol/interfaces.fc";
+#include "../../protocol/msglibs/BytesEncoder.fc";
+#include "../../classes/msgdata/LzSend.fc";
+
+#include "interface.fc";
+#include "storage.fc";
+
+#include "../baseOApp/handler.fc";
+#include "../../funC++/classlib.fc";
+#include "../../protocol/core/abstract/protocolHandler.fc";
+#include "../../protocol/msglibs/BytesDecoder.fc";
+
+;;; ================STORAGE FUNCTIONS=====================
+cell getBaseOAppStorage() impure method_id {
+    return getContractStorage().cl::get<objRef>(OftAdapter::baseOAppStorage);
+}
+
+cell setBaseOAppStorage(cell $storage, cell $newBaseOAppStorage) {
+    return $storage.cl::set(OftAdapter::baseOAppStorage, $newBaseOAppStorage);
+}
+
+;;; ================INTERFACE FUNCTIONS=====================
+
+(cell, tuple) _initialize(cell $md) impure inline {
+    return preamble();
+}
+
+int lzReceiveGas(cell $packet) impure inline method_id {
+    return 50 * 1000; ;; 50k nanoTON for lzReceive gas
+}
+
+int lzSendGas(int opcode, cell $input) impure method_id {
+    return 50 * 1000;
+}
+
+;;; ================PERMISSION FUNCTIONS=====================
+
+() _checkPermissions(int op, cell $md) impure inline {
+    if (op == OftAdapter::OP::SEND_OFT) {
+        ;; SEND_OFT is permissionless — anyone can bridge tokens
+        return ();
+    } elseif (op == OP::ForceAbort) {
+        return ();
+    } else {
+        return _oAppCheckPermissions(op, $md);
+    }
+}
+
+;;; ==========================HANDLERS=====================================
+
+;;; =============== OFT Send handler ==============
+;; User initiates a cross-chain transfer
+;; @in external from user
+;; @in_md md::OftSend
+;; @out endpoint send via _lzSend
+tuple sendOft(cell $md) impure inline {
+    (cell $storage, tuple actions) = preamble();
+
+    int dstEid = $md.cl::get<uint32>(md::OftSend::dstEid);
+    int recipientBytes32 = $md.cl::get<uint256>(md::OftSend::recipientBytes32);
+    int amountSD = $md.cl::get<uint64>(md::OftSend::amountSD);
+    int nativeFee = $md.cl::get<coins>(md::OftSend::nativeFee);
+    int zroFee = $md.cl::get<coins>(md::OftSend::zroFee);
+    cell extraOptions = $md.cl::get<objRef>(md::OftSend::extraOptions);
+
+    ;; Validate inputs
+    throw_unless(OftAdapter::ERROR::invalidAmount, amountSD > 0);
+    throw_unless(OftAdapter::ERROR::invalidRecipient, recipientBytes32 != 0);
+
+    ;; Build OFT message payload:
+    ;; [bytes32 sendTo (recipient)][uint64 amountSD]
+    ;; This matches the standard LZ OFT message format used by EVM, Solana, etc.
+    tuple message = BytesEncoder::New()
+        .BytesEncoder::feed<uint256>(recipientBytes32)
+        .BytesEncoder::feed<uint64>(amountSD);
+
+    ;; Send via LayerZero
+    actions = _lzSend(
+        dstEid,
+        OftAdapter::MSG_TYPE::SEND, ;; msgType = 1 (standard OFT send)
+        nativeFee,
+        zroFee,
+        extraOptions,
+        message.BytesEncoder::serialize(),
+        0, ;; callNanos (use CARRY_ALL_BALANCE)
+        empty_cell(), ;; no callback data
+        actions
+    );
+
+    setContractStorage($storage);
+
+    return actions;
+}
+
+;;; ============== LZ Receive handlers ====================
+
+;; Called by LZ protocol when a packet is received
+;; @in channel via lzReceiveExecute
+;; @in_md lz::Packet
+;; @out mint tokens to recipient via Jetton Master
+(cell, tuple) _sendCallback(cell $storage, tuple actions, cell $messagingReceipt) impure inline {
+    ;; On send failure, we could refund. For v1, just log and continue.
+    int errorCode = $messagingReceipt.cl::get<uint16>(md::MessagingReceipt::errorCode);
+    ;; No state rollback needed — token burn is separate
+    return ($storage, actions);
+}
+
+int _lzReceiveGas(cell $packet) impure inline method_id {
+    return 500; ;; gas required to execute the receive (mint is an outgoing message)
+}
+
+tuple _lzReceivePrepare(cell $storage, tuple actions, cell $packet) impure inline method_id {
+    ;; No preparation needed for OFT receive — just pass through
+    return actions;
+}
+
+;; Core receive handler — mints tokens to the recipient
+(cell, tuple, int) _lzReceiveExecute(cell $storage, tuple actions, cell $packet) impure inline {
+    int remoteEid = $packet
+        .cl::get<objRef>(lz::Packet::path)
+        .cl::get<uint32>(lz::Path::srcEid);
+
+    ;; Decode OFT message: [bytes32 sendTo][uint64 amountSD]
+    slice message_s = $packet.cl::get<cellRef>(lz::Packet::message).begin_parse();
+    (message_s, int recipientBytes32) = BytesDecoder::loadBytes(message_s, 32);
+    (message_s, int amountSD) = BytesDecoder::loadBytes(message_s, 8);
+
+    ;; The recipientBytes32 is a TON address (256-bit hash part)
+    ;; We need to send a mint message to the Jetton Master
+    ;; The Jetton Master will create a wallet for the recipient and mint tokens
+    int jettonMasterAddress = $storage.cl::get<address>(OftAdapter::jettonMasterAddress);
+
+    ;; Build mint message for Jetton Master
+    ;; Format: op::mint (32) + query_id (64) + to_address (addr) + amount (coins) + master_msg (ref)
+    ;; master_msg: op::internal_transfer (32) + query_id (64) + jetton_amount (coins) + from (addr) + response (addr) + fwd_amount (coins) + fwd_payload (bit)
+    cell masterMsg = begin_cell()
+        .store_uint(0x178d4519, 32) ;; op::internal_transfer
+        .store_uint(0, 64) ;; query_id
+        .store_coins(amountSD) ;; jetton_amount
+        .store_uint(0, 2) ;; from_address = addr_none
+        .store_uint(0, 2) ;; response_address = addr_none
+        .store_coins(0) ;; forward_ton_amount
+        .store_uint(0, 1) ;; empty forward_payload
+        .end_cell();
+
+    cell mintMsg = begin_cell()
+        .store_uint(0x642b7d07, 32) ;; op::mint
+        .store_uint(0, 64) ;; query_id
+        .store_uint(4, 3) ;; addr_std$10 + 0 for workchain (basechain)
+        .store_int(0, 8) ;; workchain = 0
+        .store_uint(recipientBytes32, 256) ;; address hash
+        .store_coins(50000000) ;; TON amount to send with mint (0.05 TON for wallet creation)
+        .store_ref(masterMsg)
+        .end_cell();
+
+    ;; Send mint to Jetton Master via raw message
+    ;; We use dispatch action to send with specific gas
+    var mintSendMsg = begin_cell()
+        .store_uint(0x18, 6) ;; bounceable
+        .store_uint(4, 3) ;; addr_std
+        .store_int(0, 8) ;; workchain 0
+        .store_uint(jettonMasterAddress, 256)
+        .store_coins(100000000) ;; 0.1 TON for mint gas
+        .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; body in ref
+        .store_ref(mintMsg)
+        .end_cell();
+
+    send_raw_message(mintSendMsg, 0); ;; mode 0: pay fees from message value
+
+    return ($storage, actions, true); ;; success
+}

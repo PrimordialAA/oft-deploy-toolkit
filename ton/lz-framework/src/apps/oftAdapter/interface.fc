@@ -1,0 +1,12 @@
+#include "../baseOApp/interface.fc";
+#include "storage.fc";
+
+;; OFT Adapter operation codes
+const int OftAdapter::OP::SEND_OFT = "OftAdapter::OP::SEND_OFT"c;
+
+;; OFT message types (must match EVM OFT standard)
+const int OftAdapter::MSG_TYPE::SEND = 1;
+
+;; Error codes
+const int OftAdapter::ERROR::invalidAmount = "OftAdapter::ERROR::invalidAmount"c & ERRORCODE_MASK;
+const int OftAdapter::ERROR::invalidRecipient = "OftAdapter::ERROR::invalidRecipient"c & ERRORCODE_MASK;

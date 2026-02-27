@@ -1,0 +1,46 @@
+node_modules
+.env
+coverage
+coverage.json
+typechain
+typechain-types
+
+# Hardhat files
+cache
+artifacts
+
+
+# LayerZero specific files
+.layerzero
+
+# foundry test compilation files
+out
+
+# pnpm
+pnpm-error.log
+
+# Solana / Anchor
+target/
+test-ledger/
+
+# Starknet / Scarb
+starknet/target/
+
+# Sui
+sui/*/build/
+sui/token/sources/
+sui/token/Move.toml
+sui/token/Published.toml
+sui/oft/Published.toml
+
+# TON
+ton/*/build/
+ton/*/node_modules/
+
+# Orchestrator state
+toolkit/state.json
+
+# Editor and OS files
+.DS_Store
+.idea
+.vscode/

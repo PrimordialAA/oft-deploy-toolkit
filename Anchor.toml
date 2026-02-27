@@ -1,0 +1,23 @@
+[toolchain]
+anchor_version = "0.31.1"
+
+[features]
+seeds = false
+resolution = false
+skip-lint = false
+
+[programs.mainnet]
+oft = "11111111111111111111111111111111"
+
+[programs.localnet]
+oft = "11111111111111111111111111111111"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "mainnet"
+wallet = "/tmp/oft-sol-wallet.json"
+
+[scripts]
+test = "npx jest test/anchor"
